@@ -5,7 +5,7 @@ Credits
 Citations
 =========
 
-We kindly request that you cite the following article :cite:`nikitin2022real` if you use project.
+We kindly request that you cite the following article :cite:`nikitin2022real` if you use **laminocupy-cli**
 
 .. bibliography:: bibtex/cite.bib
    :style: plain
