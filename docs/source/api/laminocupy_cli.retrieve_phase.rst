@@ -1,5 +1,5 @@
 :mod:`laminocupy_cli.retrieve_phase`
-==================================
+====================================
 
 .. automodule:: laminocupy_cli.retrieve_phase
    :members:

@@ -1,5 +1,5 @@
 :mod:`laminocupy_cli.remove_stripe`
-=================================
+===================================
 
 .. automodule:: laminocupy_cli.remove_stripe
    :members:

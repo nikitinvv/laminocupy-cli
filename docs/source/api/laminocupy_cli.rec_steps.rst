@@ -1,5 +1,5 @@
 :mod:`laminocupy_cli.rec_steps`
-=============================
+===============================
 
 .. automodule:: laminocupy_cli.rec_steps
    :members:

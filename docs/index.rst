@@ -1,6 +1,6 @@
-============
+==============
 Laminocupy-cli
-============
+==============
 
 **Laminocupy-cli** is a command-line interface for GPU reconstruction of laminographic data. All preprocessing operations are implemented on GPU with using cupy library. 
 
