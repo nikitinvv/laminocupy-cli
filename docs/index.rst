@@ -14,8 +14,8 @@ Features
 Contribute
 ----------
 
-* Documentation: https://github.com/nikitinvv/laminocupy-cli/tree/master/doc
-* Issue Tracker: https://github.com/nikitinvv/laminocupy-cli/docs/issues
+* Documentation: https://laminocupy.readthedocs.io/en/latest/#
+* Issue Tracker: https://github.com/nikitinvv/laminocupy-cli/issues
 * Source Code: https://github.com/nikitinvv/laminocupy-cli/
 
 Content
