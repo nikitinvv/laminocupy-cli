@@ -24,6 +24,7 @@ class GPURecSteps():
     """Main class for laminographic reconstruction with preprocessing procedures"""
 
     def __init__(self, args):
+        
         # Set ^C interrupt to abort and deallocate memory on GPU
         signal.signal(signal.SIGINT, utils.signal_handler)
         signal.signal(signal.SIGTSTP, utils.signal_handler)
@@ -31,6 +32,8 @@ class GPURecSteps():
         # retrieve data sizes
         with h5py.File(args.file_name) as fid:
             # determine sizes
+            #exit()
+        
             ni = fid['/exchange/data'].shape[2]
             ndark = fid['/exchange/data_dark'].shape[0]
             nflat = fid['/exchange/data_white'].shape[0]
@@ -38,7 +41,7 @@ class GPURecSteps():
             deth = fid['/exchange/data'].shape[1]
 
         # init lamino angle
-        phi = np.pi/2-args.lamino_angle/180*np.pi
+        phi = np.pi/2+args.lamino_angle/180*np.pi
         # take reconstruction height
         nz = args.recon_height
         if nz == 0:
@@ -56,7 +59,6 @@ class GPURecSteps():
         centeri /= 2**args.binning
         deth //= 2**args.binning
         nz //= 2**args.binning
-
         # change sizes for 360 deg scans with rotation axis at the border (not implemented yet): TODO
         n = ni
         center = centeri
@@ -253,12 +255,49 @@ class GPURecSteps():
         write_threads = []
         rec = self.rec_parallel_try(data, rslice, shift_array)
         dxchange.write_tiff(
-            rec[0], f'{fnameout}{((self.centeri-shift_array[0])*2**self.args.binning):08.2f}', overwrite=True)
+            rec[0], f'{fnameout}{((self.centeri+shift_array[0])*2**self.args.binning):08.2f}', overwrite=True)
         for k in range(1, len(shift_array)):
             # avoid simultaneous directory creation
             write_thread = threading.Thread(target=dxchange.write_tiff,
                                             args=(rec[k],),
                                             kwargs={'fname': f'{fnameout}{((self.centeri+shift_array[k])*2**self.args.binning):08.2f}',
+                                                    'overwrite': True})
+            write_threads.append(write_thread)
+            write_thread.start()
+
+        for thread in write_threads:
+            thread.join()
+    
+    def recon_steps_try_phi(self):
+        """GPU reconstruction by loading a full dataset in memory and processing by steps """
+
+        log.info('Step 1. Reading data.')
+        data, dark, flat = self.read_data_parallel()
+
+        log.info('Step 2. Processing by chunks in z.')
+        data = self.proc_sino_parallel(data, dark, flat)
+
+        log.info('Step 3. Processing by chunks in theta.')
+        data = self.proc_proj_parallel(data)
+
+        shift_array = np.arange(-self.args.phi_search_width,
+                                self.args.phi_search_width, self.args.phi_search_step).astype('float32')
+        rslice = int(self.args.nsino*self.nz)
+        log.info(f'Step 4. Reconstruction of the slice {rslice} for phi {self.args.lamino_angle+shift_array}')
+        log.info(f'{self.args.lamino_angle+shift_array}')
+
+        fnameout = os.path.dirname(
+            self.args.file_name)+'_rec/try_phi/'+os.path.basename(self.args.file_name)[:-3]+'/recon_'
+        log.info(f'Output: {fnameout}')
+        write_threads = []
+        rec = self.rec_parallel_try_phi(data, rslice, shift_array/180*np.pi)
+        dxchange.write_tiff(
+            rec[0], f'{fnameout}{((self.args.lamino_angle+shift_array[0])):08.2f}', overwrite=True)
+        for k in range(1, len(shift_array)):
+            # avoid simultaneous directory creation
+            write_thread = threading.Thread(target=dxchange.write_tiff,
+                                            args=(rec[k],),
+                                            kwargs={'fname': f'{fnameout}{((self.args.lamino_angle+shift_array[k])):08.2f}',
                                                     'overwrite': True})
             write_threads.append(write_thread)
             write_thread.start()
@@ -544,6 +583,82 @@ class GPURecSteps():
                                                item_gpu['theta'][(kt-1) % 2],
                                                cen[(kz-1)*self.ncz:kz*self.ncz],
                                                self.phi, rslice-self.nz//2)
+                if (kz > 1 and kt == 0):
+                    with stream3:  # gpu->cpu copy
+                        rec[(kz-2) % 2].get(out=rec_pinned[(kz-2) % 2])
+                if(kt < ntchunk):
+                    # copy to pinned memory
+                    item_pinned['data'][kt % 2][:ltchunk[kt]
+                                                ] = data[kt*self.ncproj:kt*self.ncproj+ltchunk[kt]]
+                    item_pinned['theta'][kt % 2][:ltchunk[kt]
+                                                 ] = self.theta[kt*self.ncproj:kt*self.ncproj+ltchunk[kt]]
+                    item_pinned['data'][kt % 2][ltchunk[kt]:] = 0
+                    with stream1:  # cpu->gpu copy
+                        item_gpu['data'][kt % 2].set(
+                            item_pinned['data'][kt % 2])
+                        item_gpu['theta'][kt % 2].set(
+                            item_pinned['theta'][kt % 2])
+                stream3.synchronize()
+                if (kz > 1 and kt == 0):
+                    # add a new thread for writing to hard disk (after gpu->cpu copy is done)
+                    res[(kz-2)*self.ncz:(kz-2)*self.ncz+lzchunk[kz-2]
+                        ] = rec_pinned[(kz-2) % 2, :lzchunk[kz-2]].copy()
+                stream1.synchronize()
+                stream2.synchronize()
+        return res
+
+
+    def rec_parallel_try_phi(self, data, rslice, sh):
+        """GPU reconstruction of data from an h5file by splitting into chunks"""
+
+        nzchunk = int(np.ceil(len(sh)/self.ncz))
+        lzchunk = np.minimum(
+            self.ncz, np.int32(len(sh)-np.arange(nzchunk)*self.ncz))  # chunk sizes in z
+        ntchunk = int(np.ceil(self.nproj/self.ncproj))
+        ltchunk = np.minimum(
+            self.ncproj, np.int32(self.nproj-np.arange(ntchunk)*self.ncproj))  # chunk sizes in proj
+        # pinned memory for data item
+        item_pinned = {}
+        item_pinned['data'] = utils.pinned_array(                    
+            np.zeros([2, self.ncproj, self.deth, self.ni], dtype='float32'))
+        item_pinned['theta'] = utils.pinned_array(
+            np.zeros([2, self.ncproj], dtype='float32'))
+
+        # gpu memory for data item
+        item_gpu = {}
+        item_gpu['data'] = cp.zeros(
+            [2, self.ncproj, self.deth, self.ni], dtype='float32')
+        item_gpu['theta'] = cp.zeros(
+            [2, self.ncproj], dtype='float32')
+
+        # pinned memory for reconstrution
+        rec_pinned = utils.pinned_array(
+            np.zeros([2, self.ncz, self.n, self.n], dtype='float32'))
+        # gpu memory for reconstrution
+        rec = cp.zeros([2, self.ncz, self.n, self.n], dtype='float32')
+
+        phi = cp.zeros([nzchunk*self.ncz], dtype='float32')
+        phi[:len(sh)] = cp.array(sh)+self.phi
+
+        # streams for overlapping data transfers with computations
+        stream1 = cp.cuda.Stream(non_blocking=False)
+        stream2 = cp.cuda.Stream(non_blocking=False)
+        stream3 = cp.cuda.Stream(non_blocking=False)
+
+        res = np.zeros([len(sh), self.n, self.n], dtype='float32')
+        # Conveyor for data cpu-gpu copy and reconstruction
+        for kz in range(nzchunk+2):
+            rec[(kz-1) % 2][:] = 0
+
+            for kt in range(ntchunk+2):
+                if (kz > 0 and kz < nzchunk+1 and kt > 0 and kt < ntchunk+1):
+                    with stream2:  # reconstruction
+                        backprojection.adj_try_phi(rec[(kz-1) % 2],
+                                               item_gpu['data'][(kt-1) % 2],
+                                               item_gpu['theta'][(kt-1) % 2],
+                                               self.center,
+                                               phi[(kz-1)*self.ncz:kz*self.ncz],
+                                               rslice-self.nz//2)
                 if (kz > 1 and kt == 0):
                     with stream3:  # gpu->cpu copy
                         rec[(kz-2) % 2].get(out=rec_pinned[(kz-2) % 2])

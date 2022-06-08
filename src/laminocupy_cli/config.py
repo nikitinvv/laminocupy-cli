@@ -186,7 +186,7 @@ SECTIONS['reconstruction'] = {
         'default': 'try',
         'type': str,
         'help': "Reconstruct full data set. ",
-        'choices': ['full','try']},
+        'choices': ['full','try','try_phi']},
     'rotation-axis': {
         'default': -1.0,
         'type': float,
@@ -199,6 +199,14 @@ SECTIONS['reconstruction'] = {
         'type': float,
         'default': 0.5,
         'help': "+/- center search step (pixel). "},
+    'phi-search-width': {
+        'type': float,
+        'default': 1.0,
+        'help': "+/- phi search width (deg). "},
+    'phi-search-step': {
+        'type': float,
+        'default': 0.1,
+        'help': "+/- phi search step (deg). "},
     'nsino': {
         'default': 0.5,
         'type': float,

@@ -31,6 +31,8 @@ def run_recstep(args):
             clpthandle.recon_steps()        
         if(args.reconstruction_type=='try'):            
             clpthandle.recon_steps_try()        
+        if(args.reconstruction_type=='try_phi'):            
+            clpthandle.recon_steps_try_phi()        
         log.warning(f'Reconstruction time {(time.time()-t):.01f}s')
     else:
         log.error("File Name does not exist: %s" % args.file_name)    
